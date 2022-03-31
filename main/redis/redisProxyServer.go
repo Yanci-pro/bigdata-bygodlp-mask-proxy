@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"net"
+	"strings"
 	"sync"
+
+	dlp "github.com/bytedance/godlp"
 )
 
 type ConnInfo struct {
@@ -33,7 +36,7 @@ func start() {
 	cliListen, _ := net.ListenTCP("tcp4", cliAdd)
 
 	fmt.Println("代理工具启动监听端口:", cliAdd)
-	//无限循环，接收到来自于客户端的连接的时候船舰一个函数去处理，暂时用chan通道去处理
+	//无限循环，接收到来自于客户端的连接的时候创建一个函数去处理，暂时用chan通道去处理
 	chConn := make(chan ConnInfo)
 	go func() {
 		fmt.Println("准备开始监听通道")
@@ -77,7 +80,17 @@ func dealChannel(chConn chan ConnInfo) {
 				conInfo.sendConn.Close()
 			} else {
 				//这里直接取了所有数据，如果返回的数据量大可能会分包，暂时不处理后续再想办法。
-				conInfo.sendConn.Write(data[:dlen])
+				content := strings.Split(string(data[:dlen]), split)
+				for i, value := range content {
+					if strings.HasPrefix(value, "*") || strings.HasPrefix(value, "$") {
+						conInfo.sendConn.Write([]byte(value))
+					} else {
+						conInfo.sendConn.Write([]byte(maskString(value)))
+					}
+					if i < len(content)-1 {
+						conInfo.sendConn.Write(splitB)
+					}
+				}
 				//读取结束再把信息加入通道，等待下次循环再次读取
 				chConn <- conInfo
 			}
@@ -85,6 +98,23 @@ func dealChannel(chConn chan ConnInfo) {
 	}
 }
 
+//这里直接把数据交给godlp处理，至于能识别到什么内容需要看godlp只是什么，当然以前的项目是自定义的也没问题
+func maskString(inStr string) (outStr string) {
+	caller := "replace.your.caller"
+	if eng, err := dlp.NewEngine(caller); err == nil {
+		eng.ApplyConfigDefault()
+		if outStr, _, err := eng.Deidentify(inStr); err == nil {
+			//fmt.Println(inStr, "--------->", outStr)
+			return outStr
+		}
+		eng.Close()
+	} else {
+		fmt.Println("[dlp] NewEngine error: ", err.Error())
+	}
+	return inStr
+}
+
+//启动的主方法
 func main() {
 	start()
 }
